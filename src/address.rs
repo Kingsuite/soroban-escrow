@@ -1,0 +1,245 @@
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SorobanAddress(String);
+
+impl SorobanAddress {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SorobanAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AddressError {
+    InvalidLength,
+    InvalidPrefix,
+}
+
+impl fmt::Display for AddressError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddressError::InvalidLength => write!(f, "Address has invalid length"),
+            AddressError::InvalidPrefix => write!(f, "Address must start with G or C"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AddressType {
+    Account,
+    Contract,
+    Invalid,
+}
+
+/// Validates a Stellar/Soroban address
+pub fn validate_address(address: &str) -> Result<SorobanAddress, AddressError> {
+    let first = address.chars().next().unwrap_or_default();
+    if first != 'G' && first != 'C' {
+        return Err(AddressError::InvalidPrefix);
+    }
+    if address.len() != 56 {
+        return Err(AddressError::InvalidLength);
+    }
+    Ok(SorobanAddress(address.to_string()))
+}
+
+/// Returns true if address is a contract address
+pub fn is_contract_address(address: &str) -> bool {
+    address.starts_with('C')
+}
+
+/// Returns true if address is an account address
+pub fn is_account_address(address: &str) -> bool {
+    address.starts_with('G')
+}
+
+/// Masks an address showing only first 4 and last 4 characters
+/// 
+/// # Examples
+/// ```
+/// let addr = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+/// assert_eq!(mask_address(addr), "GCEZ...5UMG");
+/// ```
+pub fn mask_address(address: &str) -> String {
+    if address.len() < 8 {
+        return address.to_string();
+    }
+    format!("{}...{}", &address[..4], &address[address.len() - 4..])
+}
+
+/// Masks the middle of an address, leaving `visible` characters at the start and end visible.
+/// If the address is too short to mask, it is returned unchanged.
+///
+/// # Examples
+/// ```
+/// let addr = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+/// assert_eq!(mask_middle(addr, 6), "GCEZWK...JA5UMG");
+/// ```
+pub fn mask_middle(address: &str, visible: usize) -> String {
+    if address.len() <= visible * 2 {
+        return address.to_string();
+    }
+    let start = &address[..visible];
+    let end = &address[address.len() - visible..];
+    format!("{}...{}", start, end)
+}
+
+/// Detects whether a string is a Stellar account address, contract address, or invalid.
+///
+/// # Examples
+///
+/// ```
+/// use soroban_toolkit::address::{detect_address_type, AddressType};
+///
+/// let account = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+/// let contract = "CCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+///
+/// assert_eq!(detect_address_type(account), AddressType::Account);
+/// assert_eq!(detect_address_type(contract), AddressType::Contract);
+/// assert_eq!(detect_address_type("not-an-address"), AddressType::Invalid);
+/// ```
+pub fn detect_address_type(address: &str) -> AddressType {
+    match validate_address(address) {
+        Ok(_) if is_contract_address(address) => AddressType::Contract,
+        Ok(_) => AddressType::Account,
+        Err(_) => AddressType::Invalid,
+    }
+}
+
+/// The result of comparing two lists of Stellar addresses.
+///
+/// # Example
+///
+/// ```
+/// use soroban_toolkit::address::diff_addresses;
+///
+/// let old = &["GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG"];
+/// let new = &[
+///     "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG",
+///     "GBXGQJWRYGHM5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JB",
+/// ];
+/// let diff = diff_addresses(old, new);
+/// assert_eq!(diff.common, vec!["GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG"]);
+/// assert_eq!(diff.added,  vec!["GBXGQJWRYGHM5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JB"]);
+/// assert!(diff.removed.is_empty());
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddressDiff {
+    /// Addresses present in `new` but not in `old`.
+    pub added: Vec<String>,
+    /// Addresses present in `old` but not in `new`.
+    pub removed: Vec<String>,
+    /// Addresses present in both `old` and `new`.
+    pub common: Vec<String>,
+}
+
+/// Compares two lists of Stellar addresses and returns the diff.
+///
+/// The order of entries in each field follows the order they first appear
+/// in the respective input slice.
+///
+/// # Example
+///
+/// ```
+/// use soroban_toolkit::address::diff_addresses;
+///
+/// let old = &[
+///     "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG",
+///     "GBXGQJWRYGHM5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JB",
+/// ];
+/// let new = &["GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG"];
+/// let diff = diff_addresses(old, new);
+/// assert_eq!(diff.common,  vec!["GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG"]);
+/// assert_eq!(diff.removed, vec!["GBXGQJWRYGHM5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JB"]);
+/// assert!(diff.added.is_empty());
+/// ```
+pub fn diff_addresses(old: &[&str], new: &[&str]) -> AddressDiff {
+    use std::collections::HashSet;
+
+    let old_set: HashSet<&str> = old.iter().copied().collect();
+    let new_set: HashSet<&str> = new.iter().copied().collect();
+
+    AddressDiff {
+        added: new
+            .iter()
+            .copied()
+            .filter(|a| !old_set.contains(a))
+            .map(String::from)
+            .collect(),
+        removed: old
+            .iter()
+            .copied()
+            .filter(|a| !new_set.contains(a))
+            .map(String::from)
+            .collect(),
+        common: old
+            .iter()
+            .copied()
+            .filter(|a| new_set.contains(a))
+            .map(String::from)
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Exactly 56 characters, starts with G
+    const VALID_ACCOUNT: &str = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+
+    // Exactly 56 characters, starts with C
+    const VALID_CONTRACT: &str = "CCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UMG";
+
+    #[test]
+    fn test_valid_account_address() {
+        assert!(validate_address(VALID_ACCOUNT).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_length() {
+        assert_eq!(validate_address("GSHORT"), Err(AddressError::InvalidLength));
+    }
+
+    #[test]
+    fn test_invalid_prefix() {
+        assert_eq!(
+            validate_address("XCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZN36UWBE5XFGT35JA5UM"),
+            Err(AddressError::InvalidPrefix)
+        );
+    }
+
+    #[test]
+    fn test_mask_address() {
+        assert_eq!(mask_address(VALID_ACCOUNT), "GCEZ...5UMG");
+    }
+
+    #[test]
+    fn test_mask_middle() {
+        assert_eq!(mask_middle(VALID_ACCOUNT, 6), "GCEZWK...JA5UMG");
+    }
+
+    #[test]
+    fn test_detect_address_type_account() {
+        assert_eq!(detect_address_type(VALID_ACCOUNT), AddressType::Account);
+    }
+
+    #[test]
+    fn test_detect_address_type_contract() {
+        assert_eq!(detect_address_type(VALID_CONTRACT), AddressType::Contract);
+    }
+
+    #[test]
+    fn test_detect_address_type_invalid() {
+        assert_eq!(detect_address_type("invalid"), AddressType::Invalid);
+    }
+
+    // Property‑based tests omitted because the `proptest` crate cannot be compiled without the MSVC linker.
+    // The tests are retained in the repository history for future use.
+}
